@@ -69,4 +69,4 @@ flask_api.add_resource(SendSMS, '/send-sms')
 
 # run app in debug mode on port 5000
 if __name__ == '__main__':
-    flask_app.run(debug=True, port=5000)
+    flask_app.run(debug=True, port=5000, host='0.0.0.0')
