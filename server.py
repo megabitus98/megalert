@@ -54,18 +54,31 @@ class SendSMS(Resource):
 
         # initialize mikrotik api
         mikrotik_api = mk_connection.get_api()
-        sms = mikrotik_api.get_binary_resource('/tool/sms')
+        send_sms = mikrotik_api.get_binary_resource('/tool/sms')
 
         # send sms
-        sms.call('send', { 'message': SMS_MESSAGE,  'phone-number': SMS_NUMBER})
+        send_sms.call('send', { 'message': SMS_MESSAGE,  'phone-number': SMS_NUMBER})
 
         # discconect from mikrotik
         mk_connection.disconnect()
 
         return True, 200 # OK
 
+    @staticmethod
+    def get():
+
+        # initialize mikrotik api
+        mikrotik_api = mk_connection.get_api()
+        sms_inbox = mikrotik_api.get_resource('/tool/sms/inbox').get()
+
+        # discconect from mikrotik
+        mk_connection.disconnect()
+
+        return sms_inbox, 200 # OK
+            
+
 # initialize route handler
-flask_api.add_resource(SendSMS, '/send-sms')
+flask_api.add_resource(SendSMS, '/api/v1/sms')
 
 # run app in debug mode on port 5000
 if __name__ == '__main__':
