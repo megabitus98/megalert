@@ -32,7 +32,7 @@ mk_connection = RouterOsApiPool(
 flask_app = Flask(__name__)
 flask_api = Api(flask_app)
 
-class SendSMS(Resource):
+class GenericSMS(Resource):
 
     @staticmethod
     def post():
@@ -46,10 +46,9 @@ class SendSMS(Resource):
 
         SMS_NUMBER = ('+' + args['number']).encode() if args['number'][0] != '+' else args['number'].encode()
         SMS_MESSAGE = args['body'].encode()
-        secret = args['secret']
 
         # if secret is wrong
-        if secret != SECRET:
+        if args['secret'] != SECRET:
             return False, 401 # Unauthorized
 
         # initialize mikrotik api
@@ -67,18 +66,43 @@ class SendSMS(Resource):
     @staticmethod
     def get():
 
+        # initialize argument parser
+        parser = reqparse.RequestParser()
+        parser.add_argument('phone', type=str, help='Phone number to lookup', required=False)
+        args = parser.parse_args()
+
+        # adds + sign to the phone number
+        phone = (args['phone'].replace(' ', '+') if (args['phone'][0] == ' ' and args['phone'][1].isdigit()) else args['phone']) if args['phone'] != None else None
+
         # initialize mikrotik api
         mikrotik_api = mk_connection.get_api()
         sms_inbox = mikrotik_api.get_resource('/tool/sms/inbox').get()
 
+        # prepare sms array
+        sms_array = list()
+
+        # append sms to array
+        for item in sms_inbox:
+            if phone == None or (phone != None and phone in item['phone']):
+                # sms metadata
+                sms = {
+                    'phone': item['phone'],
+                    'timestamp': item['timestamp'],
+                    'message': item['message']
+                }
+
+                # append sms metadata to array
+                sms_array.append(sms)
+
         # discconect from mikrotik
         mk_connection.disconnect()
 
-        return sms_inbox, 200 # OK
-            
+        return sms_array, 200 # OK
+
 
 # initialize route handler
-flask_api.add_resource(SendSMS, '/api/v1/sms')
+flask_api.add_resource(GenericSMS, '/api/v1/sms')
+
 
 # run app in debug mode on port 5000
 if __name__ == '__main__':
