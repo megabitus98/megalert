@@ -22,3 +22,7 @@ You can also run it under docker using the official docker image [megabitus/mega
 ## Disclaimer
 
 _Megalert comes with ABSOLUTELY NO WARRANTY, to the extent permitted by applicable law._
+
+## License
+
+This project is distributed under the [MIT License](https://github.com/megabitus98/megalert/blob/main/LICENSE). 
