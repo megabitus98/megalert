@@ -14,10 +14,21 @@ To run the API system locally you should follow the following steps:
 
 You can also run it under docker using the official docker image [megabitus/megalert](https://hub.docker.com/r/megabitus/megalert)
 
+### Environment variables
+
+Variable | Function
+-------- | --------
+HOST     | Mikrotik IP
+USERNAME | Mikrotik Username
+PASSWORD | Mikrotik Password
+PORT     | Mikrotik API Port (Default: 8728)
+SECRET   | Secret used as API authentication
+
 ## Features
 
 * send SMS
 * get SMS inbox
+* get SMS using phone filter
 
 ## Disclaimer
 
