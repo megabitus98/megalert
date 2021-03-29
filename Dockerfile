@@ -1,8 +1,8 @@
 FROM python:3.9.2-slim
 
-WORKDIR /app
+WORKDIR /megalert
 
-COPY requirements.txt requirements.txt
+COPY . .
 RUN pip3 install -r requirements.txt
 
 COPY server.py server.py

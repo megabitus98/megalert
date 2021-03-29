@@ -14,6 +14,12 @@ To run the API system locally you should follow the following steps:
 
 You can also run it under docker using the official docker image [megabitus/megalert](https://hub.docker.com/r/megabitus/megalert)
 
+The docker run command should look something like this:
+
+```
+docker run -d -p 5000:5000 -e HOST='IP' -e USERNAME='USER' -e PASSWORD='PASSWORD' -e PORT=8728 -e SECRET='SECRET' megabitus/megalert
+```
+
 ### Environment variables
 
 Variable | Function
