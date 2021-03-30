@@ -30,6 +30,10 @@ PASSWORD | Mikrotik Password
 PORT     | Mikrotik API Port (Default: 8728)
 SECRET   | Secret used as API authentication
 
+## Endpoints calls
+
+You can find the endpoints calls on the [Wiki](https://github.com/megabitus98/megalert/wiki)
+
 ## Features
 
 * send SMS
