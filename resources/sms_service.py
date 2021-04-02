@@ -70,7 +70,7 @@ class SMSService():
             return False, 401 # Unauthorized
 
         # initialize Mikrotik API
-        mikrotik_api = SMSService.mk_connection.get_api()
+        mikrotik_api = SMSService.mikrotik_connection.get_api()
         sms_resource = mikrotik_api.get_binary_resource('/tool/sms')
 
         # activate LTE logging
@@ -88,12 +88,13 @@ class SMSService():
         # deactivate LTE logging
         set_lte_logging(mikrotik_api, False)
 
-        # disconnect from Mikrotik device
-        SMSService.mk_connection.disconnect()
-
         # if SMS message was not delivered
         if not is_sms_delivered(mikrotik_api):
+            SMSService.mikrotik_connection.disconnect()
             return False, 500 # Internal Server Error
+
+        # disconnect from Mikrotik device
+        SMSService.mikrotik_connection.disconnect()
 
         return True, 200 # OK
 
@@ -113,7 +114,7 @@ class SMSService():
             number.replace(' ', '+')
             
         # initialize Mikrotik API
-        mikrotik_api = SMSService.mk_connection.get_api()
+        mikrotik_api = SMSService.mikrotik_connection.get_api()
         sms_inbox_resource = mikrotik_api.get_resource('/tool/sms/inbox').get()
 
         # prepare SMS array
@@ -133,6 +134,6 @@ class SMSService():
                 sms_array.append(sms)
 
         # disconnect from Mikrotik device
-        SMSService.mk_connection.disconnect()
+        SMSService.mikrotik_connection.disconnect()
 
         return sms_array, 200 # OK
