@@ -2,121 +2,138 @@
 from flask_restful          import reqparse
 from time                   import sleep
 
-# local helpers
-from helpers.environment    import SECRET
+# in-project dependencies
+from helpers.environment    import AUTH_SECRET
 
-# returns the id for the lte topic
-def get_lte_id(logging):
-    for logs in logging.get():
+# returns the ID for the LTE topic
+def get_lte_id(logging_resource):
+    for logs in logging_resource.get():
         if 'lte' in logs['topics']:
             return logs['id']
+    return None
 
-# set mkrotik logging for lte topic
+# set Mikrotik device logging for LTE topic
 def set_lte_logging(mikrotik_api, status):
+    # converts bool to Mikrotik device specific input (yes/no)
+    disabled_status = 'no' if status is True else 'yes'
 
-    # changes bool to mikrotik specific input no / yes
-    status = 'no' if status is True else 'yes'
+    logging_resource = mikrotik_api.get_resource('/system/logging')
+    logging_resource.set(
+        id = get_lte_id(logging_resource), 
+        disabled = disabled_status
+    )
 
-    logging = mikrotik_api.get_resource('/system/logging')
-    logging.set(id=get_lte_id(logging), disabled=status)
-
-# get if sms delivery was sucessful
-def sms_delivered(mikrotik_api):
+# get if SMS delivery was successful
+def is_sms_delivered(mikrotik_api):
     logs = mikrotik_api.get_resource('/log').get()
+    
     for log in logs[-6:]:
         if 'rcvd +CMS ERROR' in log['message']:
             return False
     return True
 
 class SMSService():
-    mk_connection = None
+    mikrotik_connection = None
 
     @staticmethod
-    def init(mk_connection):
-        SMSService.mk_connection = mk_connection
+    def init(mikrotik_connection):
+        SMSService.mikrotik_connection = mikrotik_connection
     
     @staticmethod
     def post_sms():
         # initialize argument parser
         parser = reqparse.RequestParser()
-        parser.add_argument('number', 
-                            type=str, 
-                            help='Phone number to send sms to')
-        parser.add_argument('body', 
-                            type=str, 
-                            help='The content for the sms')
-        parser.add_argument('secret', 
-                            type=str, 
-                            help='Autentification secret')
+        parser.add_argument(
+            'number', type = str, 
+            help = 'Phone number to send the SMS message to'
+        )
+        parser.add_argument(
+            'body', type = str, 
+            help = 'Content of the SMS message'
+        )
+        parser.add_argument(
+            'secret', type=str, 
+            help = 'Authentication secret'
+        )
         args = parser.parse_args()
 
-        SMS_NUMBER = ('+' + args['number']).encode() if args['number'][0] != '+' else args['number'].encode()
-        SMS_MESSAGE = args['body'].encode()
+        sms_number = args['number']
+        
+        if args['number'][0] != '+':
+            sms_number = '+' + sms_number
+        
+        sms_number = sms_number.encode()
+        sms_message = args['body'].encode()
 
-        # if secret is wrong
-        if args['secret'] != SECRET:
+        # if authentication secret is wrong
+        if args['secret'] != AUTH_SECRET:
             return False, 401 # Unauthorized
 
-        # initialize mikrotik api
-        mikrotik_api = SMSService.mk_connection.get_api()
-        send_sms = mikrotik_api.get_binary_resource('/tool/sms')
+        # initialize Mikrotik API
+        mikrotik_api = SMSService.mikrotik_connection.get_api()
+        sms_resource = mikrotik_api.get_binary_resource('/tool/sms')
 
-        # active lte logging
+        # activate LTE logging
         set_lte_logging(mikrotik_api, True)
 
-        # send sms
-        send_sms.call('send', { 'message': SMS_MESSAGE,  'phone-number': SMS_NUMBER})
+        # send SMS message
+        sms_resource.call('send', { 
+            'message': sms_message,
+            'phone-number': sms_number
+        })
 
         # wait 2 seconds for logs
         sleep(2)
 
-        # deactive lte logging
+        # deactivate LTE logging
         set_lte_logging(mikrotik_api, False)
 
-        # if sms was not delivered
-        if not sms_delivered(mikrotik_api):
-            # discconect from mikrotik
-            SMSService.mk_connection.disconnect()
-
+        # if SMS message was not delivered
+        if not is_sms_delivered(mikrotik_api):
+            SMSService.mikrotik_connection.disconnect()
             return False, 500 # Internal Server Error
 
-        # discconect from mikrotik
-        SMSService.mk_connection.disconnect()
+        # disconnect from Mikrotik device
+        SMSService.mikrotik_connection.disconnect()
 
         return True, 200 # OK
 
     @staticmethod
     def get_sms():
-
         # initialize argument parser
         parser = reqparse.RequestParser()
-        parser.add_argument('phone', type=str, help='Phone number to lookup', required=False)
+        parser.add_argument(
+            'number', type = str, required = False,
+            help = 'Phone number to look up'
+        )
         args = parser.parse_args()
 
         # adds + sign to the phone number
-        phone = (args['phone'].replace(' ', '+') if (args['phone'][0] == ' ' and args['phone'][1].isdigit()) else args['phone']) if args['phone'] != None else None
+        number = args['number']
+        if number != None and number[0] == ' ' and number[1].isdigit():
+            number.replace(' ', '+')
+            
+        # initialize Mikrotik API
+        mikrotik_api = SMSService.mikrotik_connection.get_api()
+        sms_inbox_resource = mikrotik_api.get_resource('/tool/sms/inbox').get()
 
-        # initialize mikrotik api
-        mikrotik_api = SMSService.mk_connection.get_api()
-        sms_inbox = mikrotik_api.get_resource('/tool/sms/inbox').get()
-
-        # prepare sms array
+        # prepare SMS array
         sms_array = list()
 
-        # append sms to array
-        for item in sms_inbox:
-            if phone == None or (phone != None and phone in item['phone']):
-                # sms metadata
+        # append SMS to array
+        for item in sms_inbox_resource:
+            if number == None or (number != None and number in item['phone']):
+                # SMS metadata
                 sms = {
-                    'phone': item['phone'],
+                    'number': item['phone'],
                     'timestamp': item['timestamp'],
                     'message': item['message']
                 }
 
-                # append sms metadata to array
+                # append SMS metadata to array
                 sms_array.append(sms)
 
-        # discconect from mikrotik
-        SMSService.mk_connection.disconnect()
+        # disconnect from Mikrotik device
+        SMSService.mikrotik_connection.disconnect()
 
         return sms_array, 200 # OK
