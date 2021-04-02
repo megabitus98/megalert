@@ -122,10 +122,10 @@ class SMSService():
 
         # append SMS to array
         for item in sms_inbox_resource:
-            if number == None or (number != None and number in item['number']):
+            if number == None or (number != None and number in item['phone']):
                 # SMS metadata
                 sms = {
-                    'number': item['number'],
+                    'number': item['phone'],
                     'timestamp': item['timestamp'],
                     'message': item['message']
                 }
