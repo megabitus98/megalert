@@ -1,44 +1,45 @@
 # Megalert
 
-A Flask-based, API-centric system to send SMS using a Mikrotik with LTE capabilities
+A Flask-based, API-centric system to send SMS using a Mikrotik device with LTE capabilities.
 
 ## Run
 
-Requirements to run Megalert locally can be found in the requirements.txt file
+To run Megalert, we recommend you follow these steps:
+1. Clone this repository;
+2. Rename `.env.sample` to `.env` and fill in the settings;
+3. Install the required dependencies using `pip3 install -r requirements.txt`;
+4. Run the application using `python server.py` on Windows or `python3 server.py` on Unix-like operating systems.
 
-To run the API system locally you should follow the following steps:
-1. Clone this repository
-2. Rename `.env.sample` to `.env` and fill in the settings
-3. Install requirements using `pip install -r requirements.txt` (on linux/macos use `pip3` instead of `pip`)
-4. Run the application using `python server.py` (on linux/macos use `python3` instead of `python`)
+You can also run it as a Docker container using our official [Docker image](https://hub.docker.com/r/megabitus/megalert).
 
-You can also run it under docker using the official docker image [megabitus/megalert](https://hub.docker.com/r/megabitus/megalert)
-
-The docker run command should look something like this:
+The `docker run` command should look like this:
 
 ```
-docker run -d -p 5000:5000 -e HOST='IP' -e USERNAME='USER' -e PASSWORD='PASSWORD' -e PORT=8728 -e SECRET='SECRET' megabitus/megalert
+docker run -d -p 5000:5000 -e MIKROTIK_HOST='192.168.0.1' -e MIKROTIK_USER='admin' -e MIKROTIK_PASS='password' -e MIKROTIK_PORT=8728 -e AUTH_SECRET='secret' megabitus/megalert
 ```
 
 ### Environment variables
 
-Variable | Function
--------- | --------
-HOST     | Mikrotik IP
-USERNAME | Mikrotik Username
-PASSWORD | Mikrotik Password
-PORT     | Mikrotik API Port (Default: 8728)
-SECRET   | Secret used as API authentication
+Variable        | Function
+--------------- | --------
+MEGALERT_HOST   | IP address of Megalert API (_default_: **0.0.0.0**)
+MEGALERT_PORT   | port of Megalert API (_default_: **5000**)
+MEGALERT_DEBUG  | debug logging for Megalert API (_default_: **True**) 
+MIKROTIK_HOST   | IP address of Mikrotik device
+MIKROTIK_USER   | username of Mikrotik device user account
+MIKROTIK_PASS   | password of Mikrotik device user account
+MIKROTIK_PORT   | port of Mikrotik API (_default_: **8728**)
+AUTH_SECRET     | authentication secret for Mikrotik API
 
-## Endpoints calls
+## Endpoints
 
-You can find the endpoints calls on the [Wiki](https://github.com/megabitus98/megalert/wiki)
+You can find details about the Megalert API's endpoints, request and response bodies etc. on this repository's [wiki](https://github.com/megabitus98/megalert/wiki).
 
 ## Features
 
-* send SMS
-* get SMS inbox
-* get SMS using phone filter
+* Send SMS messages
+* Retrieve the SMS inbox
+* Retrieve SMS messages by phone number
 
 ## Disclaimer
 

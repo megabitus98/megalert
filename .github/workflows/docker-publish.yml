@@ -2,24 +2,17 @@ name: Docker
 
 on:
   push:
-    # Publish `main` as Docker `latest` image.
     branches:
       - main
 
-    # Publish `v1.2.3` tags as releases.
     tags:
       - v*
 
 env:
-  # TODO: Change variable to your image's name.
   IMAGE_NAME: megalert
 
 jobs:
-
-  # Push image to GitHub Packages.
-  # See also https://docs.docker.com/docker-hub/builds/
   push:
-  
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
 
@@ -29,10 +22,10 @@ jobs:
       - name: Build image
         run: docker build . --file Dockerfile --tag $IMAGE_NAME
 
-      - name: Log into Docker Hub registry
+      - name: Log into DockerHub registry
         run: echo "${{ secrets.DOCKERHUBTOKEN }}" | docker login -u ${{ secrets.DOCKERHUBUSER }} --password-stdin
 
-      - name: Push image to Docker Hub
+      - name: Push image to DockerHub
         run: |
           IMAGE_ID=${{ secrets.DOCKERHUBUSER }}/$IMAGE_NAME
 
@@ -54,10 +47,10 @@ jobs:
           docker tag $IMAGE_NAME $IMAGE_ID:$VERSION
           docker push $IMAGE_ID:$VERSION
           
-      - name: Log into Github registry
+      - name: Log into GitHub Packages registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u ${{ github.actor }} --password-stdin
 
-      - name: Push image ro Github
+      - name: Push image to GitHub Packages
         run: |
           IMAGE_ID=docker.pkg.github.com/${{ github.repository }}/$IMAGE_NAME
 
