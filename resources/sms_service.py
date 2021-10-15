@@ -81,7 +81,7 @@ class SMSService():
             sms_number = '+' + sms_number
         
         sms_number = sms_number.encode()
-        sms_message = args['body'].encode()
+        sms_message = args['body']
 
         # if authentication secret is wrong
         if args['secret'] != AUTH_SECRET:
@@ -97,7 +97,7 @@ class SMSService():
             set_lte_logging(mikrotik_api, True)
 
             # send sms
-            sms_resource.call('send', { 'message': sms,  'phone-number': sms_number})
+            sms_resource.call('send', { 'message': sms.encode(),  'phone-number': sms_number})
 
             # wait 2 seconds for logs
             sleep(2)
