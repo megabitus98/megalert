@@ -91,34 +91,14 @@ class SMSService():
         mikrotik_api = SMSService.mikrotik_connection.get_api()
         sms_resource = mikrotik_api.get_binary_resource('/tool/sms')
 
-<<<<<<< Updated upstream
-        # activate LTE logging
-        set_lte_logging(mikrotik_api, True)
-
-        # send SMS message
-        sms_resource.call('send', { 
-            'message': sms_message,
-            'phone-number': sms_number
-        })
-=======
         # parse the list of messages
-        for sms in split_message_sms_friendly(SMS_MESSAGE):
+        for sms in split_message_sms_friendly(sms_message):
             # active lte logging
             set_lte_logging(mikrotik_api, True)
->>>>>>> Stashed changes
 
             # send sms
-            send_sms.call('send', { 'message': sms,  'phone-number': SMS_NUMBER})
+            sms_resource.call('send', { 'message': sms,  'phone-number': sms_number})
 
-<<<<<<< Updated upstream
-        # deactivate LTE logging
-        set_lte_logging(mikrotik_api, False)
-
-        # if SMS message was not delivered
-        if not is_sms_delivered(mikrotik_api):
-            SMSService.mikrotik_connection.disconnect()
-            return False, 500 # Internal Server Error
-=======
             # wait 2 seconds for logs
             sleep(2)
 
@@ -126,12 +106,11 @@ class SMSService():
             set_lte_logging(mikrotik_api, False)
 
             # if sms was not delivered
-            if not sms_delivered(mikrotik_api):
+            if not is_sms_delivered(mikrotik_api):
                 # discconect from mikrotik
                 SMSService.mk_connection.disconnect()
     
                 return False, 500 # Internal Server Error
->>>>>>> Stashed changes
 
         # disconnect from Mikrotik device
         SMSService.mikrotik_connection.disconnect()
