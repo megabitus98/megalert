@@ -108,7 +108,7 @@ class SMSService():
             # if sms was not delivered
             if not is_sms_delivered(mikrotik_api):
                 # discconect from mikrotik
-                SMSService.mk_connection.disconnect()
+                SMSService.mikrotik_connection.disconnect()
     
                 return False, 500 # Internal Server Error
 
