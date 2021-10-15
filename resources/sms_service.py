@@ -1,6 +1,7 @@
 # global dependencies
 from flask_restful          import reqparse
 from time                   import sleep
+from math                   import ceil
 
 # in-project dependencies
 from helpers.environment    import AUTH_SECRET
@@ -31,6 +32,23 @@ def is_sms_delivered(mikrotik_api):
         if 'rcvd +CMS ERROR' in log['message']:
             return False
     return True
+
+# splits a message, and returns a list of strings with a maximum of 160 characters
+def split_message_sms_friendly(message):
+    splited_message_array = []
+    index = 1
+    total_messages = ceil(len(message)/155)
+    combined_message = f"{index}/{total_messages} "
+    for word in message.split():
+        if len(combined_message) + len(word) < 160:
+            combined_message += f'{word} '
+        else:
+            index += 1
+            splited_message_array.append(combined_message)
+            combined_message = f"{index}/{total_messages} {word} "
+    splited_message_array.append(combined_message)
+
+    return splited_message_array
 
 class SMSService():
     mikrotik_connection = None
@@ -73,6 +91,7 @@ class SMSService():
         mikrotik_api = SMSService.mikrotik_connection.get_api()
         sms_resource = mikrotik_api.get_binary_resource('/tool/sms')
 
+<<<<<<< Updated upstream
         # activate LTE logging
         set_lte_logging(mikrotik_api, True)
 
@@ -81,10 +100,17 @@ class SMSService():
             'message': sms_message,
             'phone-number': sms_number
         })
+=======
+        # parse the list of messages
+        for sms in split_message_sms_friendly(SMS_MESSAGE):
+            # active lte logging
+            set_lte_logging(mikrotik_api, True)
+>>>>>>> Stashed changes
 
-        # wait 2 seconds for logs
-        sleep(2)
+            # send sms
+            send_sms.call('send', { 'message': sms,  'phone-number': SMS_NUMBER})
 
+<<<<<<< Updated upstream
         # deactivate LTE logging
         set_lte_logging(mikrotik_api, False)
 
@@ -92,6 +118,20 @@ class SMSService():
         if not is_sms_delivered(mikrotik_api):
             SMSService.mikrotik_connection.disconnect()
             return False, 500 # Internal Server Error
+=======
+            # wait 2 seconds for logs
+            sleep(2)
+
+            # deactive lte logging
+            set_lte_logging(mikrotik_api, False)
+
+            # if sms was not delivered
+            if not sms_delivered(mikrotik_api):
+                # discconect from mikrotik
+                SMSService.mk_connection.disconnect()
+    
+                return False, 500 # Internal Server Error
+>>>>>>> Stashed changes
 
         # disconnect from Mikrotik device
         SMSService.mikrotik_connection.disconnect()
