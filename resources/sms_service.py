@@ -37,10 +37,10 @@ def is_sms_delivered(mikrotik_api):
 def split_message_sms_friendly(message):
     splited_message_array = []
     index = 1
-    total_messages = ceil(len(message)/155)
+    total_messages = ceil(len(message)/150)
     combined_message = f"{index}/{total_messages} "
     for word in message.split():
-        if len(combined_message) + len(word) < 160:
+        if len(combined_message) + len(word) < 145:
             combined_message += f'{word} '
         else:
             index += 1
