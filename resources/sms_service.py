@@ -1,7 +1,8 @@
 # global dependencies
 from flask_restful          import reqparse
-from time                   import sleep
-from math                   import ceil
+from time                  import sleep
+from math                  import ceil
+from flask                  import request
 
 # in-project dependencies
 from helpers.environment    import AUTH_SECRET
@@ -156,3 +157,70 @@ class SMSService():
         SMSService.mikrotik_connection.disconnect()
 
         return sms_array, 200 # OK
+    
+    @staticmethod
+    def webhook_sms():
+        # Get the JSON payload from the request
+        data = request.get_json()
+    
+        if data is None:
+            return {'message': 'Invalid JSON data'}, 400  # Bad Request
+    
+        # Extract the SMS message content from the 'msg' field
+        sms_message = data.get('msg', '').strip()
+    
+        if not sms_message:
+            return {'message': 'No message to send'}, 400  # Bad Request
+    
+        # Get the phone number from the headers
+        sms_number = request.headers.get('phone')
+    
+        if not sms_number:
+            return {'message': 'Phone number header is missing'}, 400  # Bad Request
+    
+        # Ensure the phone number starts with '+'
+        if not sms_number.startswith('+'):
+            sms_number = '+' + sms_number
+
+        # Get the authorization value from headers or JSON
+        auth_value = request.headers.get('Authorization')
+        if not auth_value:
+            # Try to get 'secret' from JSON payload
+            auth_value = data.get('secret')
+
+        if auth_value != AUTH_SECRET:
+            return {'message': 'Unauthorized'}, 401  # Unauthorized
+    
+        # Initialize Mikrotik API
+        mikrotik_api = SMSService.mikrotik_connection.get_api()
+        sms_resource = mikrotik_api.get_binary_resource('/tool/sms')
+    
+        # Split message if necessary
+        messages = split_message_sms_friendly(sms_message)
+    
+        for message in messages:
+            # Activate LTE logging
+            set_lte_logging(mikrotik_api, True)
+    
+            # Send SMS
+            sms_resource.call('send', {
+                'message': message.encode(),
+                'phone-number': sms_number.encode()
+            })
+    
+            # Wait for logs
+            sleep(2)
+    
+            # Deactivate LTE logging
+            set_lte_logging(mikrotik_api, False)
+    
+            # Check if SMS was delivered
+            if not is_sms_delivered(mikrotik_api):
+                # Disconnect from Mikrotik
+                SMSService.mikrotik_connection.disconnect()
+                return {'message': 'Failed to send SMS'}, 500  # Internal Server Error
+    
+        # Disconnect from Mikrotik device
+        SMSService.mikrotik_connection.disconnect()
+    
+        return {'message': 'SMS sent successfully'}, 200  # OK
