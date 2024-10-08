@@ -11,3 +11,5 @@ RouterOS_api >= 0.18.0
 
 # megalert/server.py: 6
 python_dotenv >= 0.16.0
+
+phonenumbers == 8.13.47

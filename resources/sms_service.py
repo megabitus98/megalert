@@ -1,8 +1,11 @@
 # global dependencies
-from flask_restful          import reqparse
-from time                  import sleep
-from math                  import ceil
-from flask                  import request
+from flask_restful                      import reqparse
+from time                               import sleep
+from math                               import ceil
+from flask                              import request
+from phonenumbers                       import carrier
+from phonenumbers                       import parse
+from phonenumbers.phonenumberutil       import number_type
 
 # in-project dependencies
 from helpers.environment    import AUTH_SECRET
@@ -51,6 +54,15 @@ def split_message_sms_friendly(message):
 
     return splited_message_array
 
+def valid_phone_number(phone_number):
+    valid = False
+    try:
+        valid = carrier._is_mobile(number_type(parse(phone_number)))
+    except:
+        valid = False
+    
+    return valid
+
 class SMSService():
     mikrotik_connection = None
 
@@ -64,22 +76,34 @@ class SMSService():
         parser = reqparse.RequestParser()
         parser.add_argument(
             'number', type = str, 
-            help = 'Phone number to send the SMS message to'
+            help = 'Phone number to send the SMS message to',
+            required = True,
+            location = 'args'
         )
         parser.add_argument(
             'body', type = str, 
-            help = 'Content of the SMS message'
+            help = 'Content of the SMS message',
+            required = True,
+            location = 'args'
         )
         parser.add_argument(
             'secret', type=str, 
-            help = 'Authentication secret'
+            help = 'Authentication secret',
+            required = True,
+            location = 'args'
         )
         args = parser.parse_args()
+
+        print(args)
 
         sms_number = args['number']
         
         if args['number'][0] != '+':
             sms_number = '+' + sms_number
+        
+        # if phone number is invalid
+        if not valid_phone_number(sms_number):
+            return {'message': 'Invalid phone number format'}, 400 
         
         sms_number = sms_number.encode()
         sms_message = args['body']
@@ -96,6 +120,8 @@ class SMSService():
         for sms in split_message_sms_friendly(sms_message):
             # active lte logging
             set_lte_logging(mikrotik_api, True)
+
+            print(f"Body: {sms} | Phone: {sms_number}")
 
             # send sms
             sms_resource.call('send', { 'message': sms.encode(),  'phone-number': sms_number})
@@ -124,7 +150,8 @@ class SMSService():
         parser = reqparse.RequestParser()
         parser.add_argument(
             'number', type = str, required = False,
-            help = 'Phone number to look up'
+            help = 'Phone number to look up',
+            location = 'args'
         )
         args = parser.parse_args()
 
