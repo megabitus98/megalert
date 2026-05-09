@@ -120,7 +120,7 @@ class TestMessageValidation(unittest.TestCase):
 class TestBearerAuth(unittest.TestCase):
 
     def setUp(self):
-        _stub_env(API_TOKEN='super-secret')
+        _stub_env(API_TOKEN='super-secret', AUTH_SECRET='super-secret')
         for m in list(sys.modules):
             if 'helpers.auth' in m:
                 del sys.modules[m]
