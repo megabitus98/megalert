@@ -1,253 +1,298 @@
-# global dependencies
-from flask_restful                      import reqparse
-from time                               import sleep
-from math                               import ceil
-from flask                              import request
-from phonenumbers                       import carrier
-from phonenumbers                       import parse
-from phonenumbers.phonenumberutil       import number_type
+import logging
+import uuid
+from datetime import datetime, timezone
+from math import ceil
+from time import sleep
 
-# in-project dependencies
-from helpers.environment    import AUTH_SECRET
+from flask import request
+from flask_restful import reqparse
+from phonenumbers import PhoneNumberType, parse
+from phonenumbers.phonenumberutil import number_type
 
-# returns the ID for the LTE topic
-def get_lte_id(logging_resource):
-    for logs in logging_resource.get():
-        if 'lte' in logs['topics']:
-            return logs['id']
+from helpers.auth import is_authorized
+from helpers.environment import (
+    ALLOWED_COUNTRY_CODES,
+    MAX_MESSAGE_LENGTH,
+    MIKROTIK_SMS_PORT,
+)
+from helpers.rate_limiter import check_rate_limit
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Mikrotik helpers
+# ---------------------------------------------------------------------------
+
+def _get_lte_id(logging_resource):
+    for entry in logging_resource.get():
+        if 'lte' in entry.get('topics', ''):
+            return entry['id']
     return None
 
-# set Mikrotik device logging for LTE topic
-def set_lte_logging(mikrotik_api, status):
-    # converts bool to Mikrotik device specific input (yes/no)
-    disabled_status = 'no' if status is True else 'yes'
 
-    logging_resource = mikrotik_api.get_resource('/system/logging')
-    logging_resource.set(
-        id = get_lte_id(logging_resource), 
-        disabled = disabled_status
-    )
+def _set_lte_logging(mikrotik_api, enabled: bool):
+    disabled = 'no' if enabled else 'yes'
+    res = mikrotik_api.get_resource('/system/logging')
+    lte_id = _get_lte_id(res)
+    if lte_id:
+        res.set(id=lte_id, disabled=disabled)
 
-# get if SMS delivery was successful
-def is_sms_delivered(mikrotik_api):
+
+def _is_sms_delivered(mikrotik_api) -> bool:
     logs = mikrotik_api.get_resource('/log').get()
-    
-    for log in logs[-6:]:
-        if 'rcvd +CMS ERROR' in log['message']:
-            return False
-    return True
+    return not any('rcvd +CMS ERROR' in e.get('message', '') for e in logs[-6:])
 
-# splits a message, and returns a list of strings with a maximum of 160 characters
-def split_message_sms_friendly(message):
-    splited_message_array = []
-    index = 1
-    total_messages = ceil(len(message)/145)
-    combined_message = f"{index}/{total_messages} "
+
+def _split_message(message: str) -> "list[str]":
+    """Split a long message into SMS parts. Prefix X/Y only when more than one part."""
+    if len(message) <= 160:
+        return [message]
+
+    total = ceil(len(message) / 145)
+    parts, idx, current = [], 1, f"1/{total} "
     for word in message.split():
-        if len(combined_message) + len(word) < 150:
-            combined_message += f'{word} '
+        if len(current) + len(word) < 150:
+            current += f'{word} '
         else:
-            index += 1
-            splited_message_array.append(combined_message)
-            combined_message = f"{index}/{total_messages} {word} "
-    splited_message_array.append(combined_message)
+            parts.append(current)
+            idx += 1
+            current = f'{idx}/{total} {word} '
+    parts.append(current)
+    return parts
 
-    return splited_message_array
 
-def valid_phone_number(phone_number):
-    valid = False
+def _mask_phone(phone: str) -> str:
+    return phone[:-3].replace(phone[3:-3], '***') if len(phone) > 6 else '***'
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+def valid_phone_number(phone: str) -> bool:
     try:
-        valid = carrier._is_mobile(number_type(parse(phone_number)))
-    except:
-        valid = False
-    
-    return valid
+        nt = number_type(parse(phone))
+        return nt in (PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE)
+    except Exception as exc:
+        log.debug("phone validation failed for %r: %s", phone, exc)
+        return False
 
-class SMSService():
+
+def _allowed_country(phone: str) -> bool:
+    if not ALLOWED_COUNTRY_CODES:
+        return True
+    return any(phone.startswith(f'+{cc}') for cc in ALLOWED_COUNTRY_CODES)
+
+
+def _validate_phone(phone: str):
+    """Return (normalized_phone, error_response) tuple. error_response is None on success."""
+    if not phone:
+        return None, ({'error': 'phone is required'}, 400)
+    if not phone.startswith('+'):
+        phone = '+' + phone
+    if not valid_phone_number(phone):
+        return None, ({'error': 'Invalid phone number format, use E.164 (e.g. +491631272782)'}, 400)
+    if not _allowed_country(phone):
+        return None, ({'error': f'Country code not allowed'}, 403)
+    return phone, None
+
+
+def _validate_message(message: str):
+    if not message or not message.strip():
+        return None, ({'error': 'message is required'}, 400)
+    if len(message) > MAX_MESSAGE_LENGTH:
+        return None, ({'error': f'Message exceeds maximum length of {MAX_MESSAGE_LENGTH} characters'}, 400)
+    return message.strip(), None
+
+
+# ---------------------------------------------------------------------------
+# Core SMS send logic
+# ---------------------------------------------------------------------------
+
+def _send_via_mikrotik(mikrotik_connection, phone: str, message: str) -> bool:
+    """Send one or more SMS parts via Mikrotik. Returns True on success."""
+    mikrotik_api = mikrotik_connection.get_api()
+    sms_resource = mikrotik_api.get_binary_resource('/tool/sms')
+    parts = _split_message(message)
+
+    try:
+        for part in parts:
+            _set_lte_logging(mikrotik_api, True)
+            params = {
+                'message': part.encode(),
+                'phone-number': phone.encode(),
+            }
+            if MIKROTIK_SMS_PORT:
+                params['port'] = MIKROTIK_SMS_PORT.encode()
+            sms_resource.call('send', params)
+            sleep(2)
+            _set_lte_logging(mikrotik_api, False)
+
+            if not _is_sms_delivered(mikrotik_api):
+                return False
+
+        return True
+    finally:
+        mikrotik_connection.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# SMSService
+# ---------------------------------------------------------------------------
+
+class SMSService:
     mikrotik_connection = None
 
     @staticmethod
     def init(mikrotik_connection):
         SMSService.mikrotik_connection = mikrotik_connection
-    
+
+    # ------------------------------------------------------------------
+    # POST /api/v1/sms/send  (new primary endpoint)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def send_sms():
+        if not is_authorized():
+            log.warning("send_sms | unauthorized request from %s", request.remote_addr)
+            return {'error': 'Unauthorized — provide Authorization: Bearer <token>'}, 401
+
+        if not check_rate_limit():
+            log.warning("send_sms | rate limit exceeded")
+            return {'error': 'Rate limit exceeded, try again later'}, 429
+
+        data = request.get_json(silent=True)
+        if not data:
+            return {'error': 'Expected JSON body'}, 400
+
+        phone, err = _validate_phone(data.get('phone', ''))
+        if err:
+            return err
+
+        message, err = _validate_message(data.get('message', ''))
+        if err:
+            return err
+
+        source = data.get('source', 'unknown')
+        log.info("send_sms | phone=%s source=%s", _mask_phone(phone), source)
+
+        try:
+            ok = _send_via_mikrotik(SMSService.mikrotik_connection, phone, message)
+        except Exception as exc:
+            log.error("send_sms | mikrotik error: %s", exc)
+            return {'error': 'Failed to reach Mikrotik device', 'detail': str(exc)}, 503
+
+        if not ok:
+            log.error("send_sms | delivery failed for %s", _mask_phone(phone))
+            return {'error': 'SMS delivery failed (CMS error from modem)'}, 500
+
+        message_id = str(uuid.uuid4())
+        timestamp = datetime.now(timezone.utc).isoformat()
+        log.info("send_sms | sent OK | phone=%s id=%s", _mask_phone(phone), message_id)
+
+        return {
+            'status': 'sent',
+            'phone': phone,
+            'message_id': message_id,
+            'timestamp': timestamp,
+        }, 200
+
+    # ------------------------------------------------------------------
+    # POST /api/v1/sms  (legacy — query params, deprecated)
+    # ------------------------------------------------------------------
     @staticmethod
     def post_sms():
-        # initialize argument parser
         parser = reqparse.RequestParser()
-        parser.add_argument(
-            'number', type = str, 
-            help = 'Phone number to send the SMS message to',
-            required = True,
-            location = 'args'
-        )
-        parser.add_argument(
-            'body', type = str, 
-            help = 'Content of the SMS message',
-            required = True,
-            location = 'args'
-        )
-        parser.add_argument(
-            'secret', type=str, 
-            help = 'Authentication secret',
-            required = True,
-            location = 'args'
-        )
+        parser.add_argument('number', type=str, required=True, location='args')
+        parser.add_argument('body', type=str, required=True, location='args')
+        parser.add_argument('secret', type=str, required=True, location='args')
         args = parser.parse_args()
 
-        print(args)
+        if not is_authorized(legacy_secret=args['secret']):
+            return {'error': 'Unauthorized'}, 401
 
-        sms_number = args['number']
-        
-        if args['number'][0] != '+':
-            sms_number = '+' + sms_number
-        
-        # if phone number is invalid
-        if not valid_phone_number(sms_number):
-            return {'message': 'Invalid phone number format'}, 400 
-        
-        sms_number = sms_number.encode()
-        sms_message = args['body']
+        phone, err = _validate_phone(args['number'])
+        if err:
+            return err
 
-        # if authentication secret is wrong
-        if args['secret'] != AUTH_SECRET:
-            return False, 401 # Unauthorized
+        message, err = _validate_message(args['body'])
+        if err:
+            return err
 
-        # initialize Mikrotik API
-        mikrotik_api = SMSService.mikrotik_connection.get_api()
-        sms_resource = mikrotik_api.get_binary_resource('/tool/sms')
+        if not check_rate_limit():
+            return {'error': 'Rate limit exceeded'}, 429
 
-        # parse the list of messages
-        for sms in split_message_sms_friendly(sms_message):
-            # active lte logging
-            set_lte_logging(mikrotik_api, True)
+        log.info("post_sms (legacy) | phone=%s", _mask_phone(phone))
 
-            print(f"Body: {sms} | Phone: {sms_number}")
+        try:
+            ok = _send_via_mikrotik(SMSService.mikrotik_connection, phone, message)
+        except Exception as exc:
+            log.error("post_sms | mikrotik error: %s", exc)
+            return {'error': str(exc)}, 503
 
-            # send sms
-            sms_resource.call('send', { 'message': sms.encode(),  'phone-number': sms_number})
+        return ({'status': 'sent'}, 200) if ok else ({'error': 'SMS delivery failed'}, 500)
 
-            # wait 2 seconds for logs
-            sleep(2)
-
-            # deactive lte logging
-            set_lte_logging(mikrotik_api, False)
-
-            # if sms was not delivered
-            if not is_sms_delivered(mikrotik_api):
-                # discconect from mikrotik
-                SMSService.mikrotik_connection.disconnect()
-    
-                return False, 500 # Internal Server Error
-
-        # disconnect from Mikrotik device
-        SMSService.mikrotik_connection.disconnect()
-
-        return True, 200 # OK
-
+    # ------------------------------------------------------------------
+    # GET /api/v1/sms  (read inbox, legacy)
+    # ------------------------------------------------------------------
     @staticmethod
     def get_sms():
-        # initialize argument parser
+        if not is_authorized():
+            log.warning("get_sms | unauthorized request from %s", request.remote_addr)
+            return {'error': 'Unauthorized'}, 401
+
         parser = reqparse.RequestParser()
-        parser.add_argument(
-            'number', type = str, required = False,
-            help = 'Phone number to look up',
-            location = 'args'
-        )
+        parser.add_argument('number', type=str, required=False, location='args')
         args = parser.parse_args()
 
-        # adds + sign to the phone number
-        number = args['number']
-        if number != None and number[0] == ' ' and number[1].isdigit():
-            number.replace(' ', '+')
-            
-        # initialize Mikrotik API
+        number = args.get('number')
+        if number and not number.startswith('+'):
+            number = '+' + number
+
         mikrotik_api = SMSService.mikrotik_connection.get_api()
-        sms_inbox_resource = mikrotik_api.get_resource('/tool/sms/inbox').get()
-
-        # prepare SMS array
-        sms_array = list()
-
-        # append SMS to array
-        for item in sms_inbox_resource:
-            if number == None or (number != None and number in item['phone']):
-                # SMS metadata
-                sms = {
-                    'number': item['phone'],
-                    'timestamp': item['timestamp'],
-                    'message': item['message']
-                }
-
-                # append SMS metadata to array
-                sms_array.append(sms)
-
-        # disconnect from Mikrotik device
+        inbox = mikrotik_api.get_resource('/tool/sms/inbox').get()
         SMSService.mikrotik_connection.disconnect()
 
-        return sms_array, 200 # OK
-    
+        result = [
+            {'number': item['phone'], 'timestamp': item['timestamp'], 'message': item['message']}
+            for item in inbox
+            if number is None or number in item['phone']
+        ]
+        return result, 200
+
+    # ------------------------------------------------------------------
+    # POST /api/v1/sms/webhook  (Uptime Kuma webhook, legacy)
+    # ------------------------------------------------------------------
     @staticmethod
     def webhook_sms():
-        # Get the JSON payload from the request
-        data = request.get_json()
-    
-        if data is None:
-            return {'message': 'Invalid JSON data'}, 400  # Bad Request
-    
-        # Extract the SMS message content from the 'msg' field
-        sms_message = data.get('msg', '').strip()
-    
-        if not sms_message:
-            return {'message': 'No message to send'}, 400  # Bad Request
-    
-        # Get the phone number from the headers
-        sms_number = request.headers.get('phone')
-    
-        if not sms_number:
-            return {'message': 'Phone number header is missing'}, 400  # Bad Request
-    
-        # Ensure the phone number starts with '+'
-        if not sms_number.startswith('+'):
-            sms_number = '+' + sms_number
+        data = request.get_json(silent=True)
+        if not data:
+            return {'error': 'Invalid JSON'}, 400
 
-        # Get the authorization value from headers or JSON
-        auth_value = request.headers.get('Authorization')
-        if not auth_value:
-            # Try to get 'secret' from JSON payload
-            auth_value = data.get('secret')
+        legacy_secret = data.get('secret')
+        if not is_authorized(legacy_secret=legacy_secret):
+            return {'error': 'Unauthorized'}, 401
 
-        if auth_value != AUTH_SECRET:
-            return {'message': 'Unauthorized'}, 401  # Unauthorized
-    
-        # Initialize Mikrotik API
-        mikrotik_api = SMSService.mikrotik_connection.get_api()
-        sms_resource = mikrotik_api.get_binary_resource('/tool/sms')
-    
-        # Split message if necessary
-        messages = split_message_sms_friendly(sms_message)
-    
-        for message in messages:
-            # Activate LTE logging
-            set_lte_logging(mikrotik_api, True)
-    
-            # Send SMS
-            sms_resource.call('send', {
-                'message': message.encode(),
-                'phone-number': sms_number.encode()
-            })
-    
-            # Wait for logs
-            sleep(2)
-    
-            # Deactivate LTE logging
-            set_lte_logging(mikrotik_api, False)
-    
-            # Check if SMS was delivered
-            if not is_sms_delivered(mikrotik_api):
-                # Disconnect from Mikrotik
-                SMSService.mikrotik_connection.disconnect()
-                return {'message': 'Failed to send SMS'}, 500  # Internal Server Error
-    
-        # Disconnect from Mikrotik device
-        SMSService.mikrotik_connection.disconnect()
-    
-        return {'message': 'SMS sent successfully'}, 200  # OK
+        message, err = _validate_message(data.get('msg', ''))
+        if err:
+            return err
+
+        phone, err = _validate_phone(request.headers.get('phone', ''))
+        if err:
+            return err
+
+        if not check_rate_limit():
+            return {'error': 'Rate limit exceeded'}, 429
+
+        log.info("webhook_sms | phone=%s", _mask_phone(phone))
+
+        try:
+            ok = _send_via_mikrotik(SMSService.mikrotik_connection, phone, message)
+        except Exception as exc:
+            log.error("webhook_sms | mikrotik error: %s", exc)
+            return {'error': str(exc)}, 503
+
+        if not ok:
+            return {'error': 'SMS delivery failed'}, 500
+
+        return {'status': 'sent'}, 200
